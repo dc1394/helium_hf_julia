@@ -9,9 +9,9 @@ module Helium_HF
 
     const SCFTHRESHOLD = 1.0E-15
 
-    function do_scfloop()
+    function do_scfloop(verbose=true)
         # 使用するGTOの数を入力
-        nalpha = 6 #input_nalpha()
+        nalpha = input_nalpha()
 
         # GTOの肩の係数が格納された配列を生成
         alpha = make_alpha(nalpha)
@@ -32,21 +32,25 @@ module Helium_HF
         enew = 0.0;
 
         # SCFループ
+        f = Symmetric(similar(h))
+        stmp = similar(s)
+
         for iter = 1:MAXITER
             # Fock行列を生成
-            f = make_fockmatrix(c, h, q)
+            make_fockmatrix!(f, c, h, q)
 
             # 一般化固有値問題を解く
-            eigenval, eigenvec = eigen(f, s)
-            
+            stmp .= s
+            eigenval, eigenvec = eigen!(f, stmp)
+
             # E'を取得
             ep = eigenval[1]
-            
+
             # 固有ベクトルを取得
-            c = vec(eigenvec)[1:nalpha]
+            c .= @view(eigenvec[:,1])
 
             # 固有ベクトルを正規化
-            c = normalize(alpha, c)
+            normalize!(alpha, c)
 
             # 前回のSCF計算のエネルギーを保管
             eold = enew;
@@ -54,7 +58,7 @@ module Helium_HF
             # 今回のSCF計算のエネルギーを計算する
             enew = getenergy(c, ep, h);
 
-            @printf "Iteration # %2d: HF eigenvalue = %.14f, energy = %.14f\n" iter ep enew
+            verbose && @printf "Iteration # %2d: HF eigenvalue = %.14f, energy = %.14f\n" iter ep enew
 
             # SCF計算が収束したかどうか
             if abs(enew - eold) < SCFTHRESHOLD 
@@ -62,7 +66,7 @@ module Helium_HF
                 return enew
             end
         end     
-       
+
         # SCF計算が収束しなかった
         return nothing
     end
@@ -70,9 +74,9 @@ module Helium_HF
     function getenergy(c, ep, h)
         nalpha = length(c)
         e = ep
-        
-        for p = 1:nalpha
-            for q = 1:nalpha
+
+        @inbounds @simd for q = 1:nalpha
+            for p = 1:nalpha
                 # E = E' + Cp * Cq * hpq
                 e += c[p] * c[q] * h[p, q]
             end
@@ -82,7 +86,7 @@ module Helium_HF
     end
 
     function input_nalpha()
-        nalpha = 0
+        nalpha = nothing
 
         while true
             @printf "使用するGTOの個数を入力してください (3, 4 or 6): "
@@ -113,66 +117,64 @@ module Helium_HF
     end
 
     function make_c(nalpha, val)
-        return [val for i = 1:nalpha]
+        return fill(val, nalpha)
     end
 
-    function make_fockmatrix(c, h, q)
+    function make_fockmatrix!(f, c, h, q)
         nalpha = length(c)
-        f = zeros(nalpha, nalpha)
+        f .= 0
 
-        for p = 1:nalpha
-            for qi = 1:nalpha
+        @inbounds for qi = 1:nalpha
+            for p = 1:qi
                 # Fpq = hpq + ΣCr * Cs * Qprqs
-                f[p, qi] = h[p, qi];
+                f.data[p, qi] = h[p, qi]
 
-                for r = 1:nalpha
-                    for s = 1:nalpha
-                        f[p, qi] += c[r] * c[s] * q[p, r, qi, s]
+                for s = 1:nalpha
+                    for r = 1:nalpha
+                        f.data[p, qi] += c[r] * c[s] * q[p, r, qi, s]
                     end
                 end
             end
         end
-
-        return f
     end
 
     function make_oneelectroninteg(alpha)
         nalpha = length(alpha);
-        h =  zeros(nalpha, nalpha)
+        h = Symmetric(zeros(nalpha, nalpha))
 
-        for p = 1:nalpha
-            for q = 1:nalpha
+        @inbounds for q = 1:nalpha
+            for p = 1:q
                 # αp + αq
-                appaq = alpha[p] + alpha[q];
+                appaq = alpha[p] + alpha[q]
 
                 # hpq = 3αpαqπ^1.5 / (αp + αq)^2.5 - 4π / (αp + αq)
-                h[p, q] = 3.0 * alpha[p] * alpha[q] * ((pi / appaq) ^ 1.5) / appaq -
-                          4.0 * pi / appaq
+                h.data[p, q] = 3.0 * alpha[p] * alpha[q] * ((pi / appaq) ^ 1.5) / appaq -
+                        4.0 * pi / appaq
             end
         end
 
         return h
     end
-    
+
     function make_overlapmatrix(alpha)
         nalpha = length(alpha)
-        s = zeros(nalpha, nalpha)
+        s = Symmetric(zeros(nalpha, nalpha))
 
-        for p = 1:nalpha
-            for q = 1:nalpha
+        @inbounds for q = 1:nalpha
+            for p = 1:q
                 # Spq = (π / (αp + αq))^1.5
-                s[p, q] = (pi / (alpha[p] + alpha[q])) ^ 1.5
+                s.data[p, q] = (pi / (alpha[p] + alpha[q])) ^ 1.5
             end
         end
 
         return s
     end
-    
+
     function make_twoelectroninteg(alpha)
         nalpha = length(alpha)
         q = zeros(nalpha, nalpha, nalpha, nalpha)
 
-        for p = 1:nalpha
+        @inbounds for p = 1:nalpha
             for qi = 1:nalpha
                 for r = 1:nalpha
                     for s = 1:nalpha
@@ -188,16 +190,16 @@ module Helium_HF
         return q
     end
 
-    function normalize(alpha, c)
+    function normalize!(alpha, c)
         nalpha = length(c)
 
         sum = 0.0
-        for i = 1:nalpha
+        @inbounds @simd for i = 1:nalpha
             for j = 1:nalpha
                 sum += c[i] * c[j] / (4.0 * (alpha[i] + alpha[j])) * (pi / (alpha[i] + alpha[j])) ^ 0.5
             end
         end 
 
-        return map(item -> item / sqrt(4.0 * pi * sum), c)
+        c ./= sqrt(4.0 * pi * sum)
     end
 end

@@ -11,4 +11,4 @@ function main()
     end
 end
 
-@time main()
+main()
