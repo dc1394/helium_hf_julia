@@ -107,13 +107,12 @@ module Helium_HF
     end
 
     function make_alpha(nalpha)
-        alpha = @match nalpha begin
+        return @match nalpha begin
                     3 => [0.31364978999999998, 1.1589229999999999, 6.3624213899999997]
                     4 => [0.297104, 1.236745, 5.749982, 38.2166777]
                     6 => [0.18595935599999999, 0.45151632200000003, 1.1627151630000001, 3.384639924, 12.09819836, 65.984568240000002]
                     _ => []
-                end
-        return alpha
+               end
     end
 
     function make_c(nalpha, val)
@@ -172,7 +171,7 @@ module Helium_HF
 
     function make_twoelectroninteg(alpha)
         nalpha = length(alpha)
-        q = zeros(nalpha, nalpha, nalpha, nalpha)
+        q = Array{Float64}(undef, nalpha, nalpha, nalpha, nalpha)
 
         @inbounds for p = 1:nalpha
             for qi = 1:nalpha
