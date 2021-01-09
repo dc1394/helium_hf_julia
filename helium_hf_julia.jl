@@ -3,10 +3,10 @@ module Helium_HF
     using Match
     using Printf
 
+    const DR = 0.01
+    const MAXR = 30.0
     const MAXBUFSIZE = 32
-
     const MAXITER = 1000
-
     const SCFTHRESHOLD = 1.0E-15
 
     function do_scfloop(verbose=true)
@@ -29,7 +29,7 @@ module Helium_HF
         c = make_c(nalpha, 0.0)
 
         # 新しく計算されたエネルギー
-        enew = 0.0;
+        enew = 0.0
 
         # SCFループ
         f = Symmetric(similar(h))
@@ -53,17 +53,17 @@ module Helium_HF
             normalize!(alpha, c)
 
             # 前回のSCF計算のエネルギーを保管
-            eold = enew;
+            eold = enew
 
             # 今回のSCF計算のエネルギーを計算する
-            enew = getenergy(c, ep, h);
+            enew = getenergy(c, ep, h)
 
             verbose && @printf "Iteration # %2d: HF eigenvalue = %.14f, energy = %.14f\n" iter ep enew
 
             # SCF計算が収束したかどうか
-            if abs(enew - eold) < SCFTHRESHOLD 
-                # 収束したのでそのエネルギーを返す
-                return enew
+            if abs(enew - eold) < SCFTHRESHOLD
+                # 収束したのでα, c, エネルギーを返す
+                return alpha, c, enew
             end
         end     
 
@@ -138,7 +138,7 @@ module Helium_HF
     end
 
     function make_oneelectroninteg(alpha)
-        nalpha = length(alpha);
+        nalpha = length(alpha)
         h = Symmetric(zeros(nalpha, nalpha))
 
         @inbounds for q = 1:nalpha
@@ -197,8 +197,29 @@ module Helium_HF
             for j = 1:nalpha
                 sum += c[i] * c[j] / (4.0 * (alpha[i] + alpha[j])) * (pi / (alpha[i] + alpha[j])) ^ 0.5
             end
-        end 
+        end
 
         c ./= sqrt(4.0 * pi * sum)
     end
+
+    save_result(alpha, c, filename) = let
+        func = (r) -> begin
+            nalpha = length(c)
+
+            result = 0.0
+            for i = 1:nalpha
+                result += c[i] * exp(-alpha[i] * r * r) 
+            end
+
+            return result
+        end
+
+        open(filename, "w" ) do fp
+            for i in 0:floor(Int, MAXR / DR)
+                r = float(i) * DR
+   
+                println(fp, @sprintf "%.14f, %.14f" r func(r))
+            end
+        end
+    end       
 end
